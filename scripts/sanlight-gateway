@@ -202,9 +202,9 @@ uart_overrun_count() {
   [[ -r "$source" ]] || { echo 0; return 0; }
   awk '
     {
-      for (index = 1; index <= NF; index++) {
-        if ($index ~ /^oe:[0-9]+$/) {
-          split($index, parts, ":")
+      for (field_number = 1; field_number <= NF; field_number++) {
+        if ($field_number ~ /^oe:[0-9]+$/) {
+          split($field_number, parts, ":")
           total += parts[2]
         }
       }

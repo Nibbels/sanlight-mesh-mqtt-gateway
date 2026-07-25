@@ -90,6 +90,31 @@ class ProductizationFilesTest(unittest.TestCase):
         self.assertNotIn("set-max", capture)
         self.assertNotIn("set-uptime", capture)
 
+    def test_uart_overrun_parser_is_awk_portable(self) -> None:
+        helper = (ROOT / "scripts/sanlight-gateway").read_text(encoding="utf-8")
+        function_start = helper.index("uart_overrun_count()")
+        function_end = helper.index("\n}\n\nmesh_health_doctor_summary", function_start)
+        function = helper[function_start:function_end]
+        marker_start = "  awk '\n"
+        marker_end = "\n  ' \"$source\""
+        program_start = function.index(marker_start) + len(marker_start)
+        program_end = function.index(marker_end, program_start)
+        program = function[program_start:program_end]
+
+        completed = subprocess.run(
+            ["awk", program],
+            input=(
+                "serinfo:1.0 driver revision:\n"
+                "1: uart:PL011 tx:10 rx:20 oe:40 RTS|CTS|DTR\n"
+                "2: uart:PL011 tx:30 rx:40 oe:2 RTS|CTS|DTR\n"
+            ),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.stdout.strip(), "42")
+        self.assertNotIn("for (index =", program)
+
     def test_management_and_service_include_local_broker(self) -> None:
         helper = (ROOT / "scripts/sanlight-gateway").read_text(encoding="utf-8")
         unit = (ROOT / "systemd/sanlight-mqtt-gateway.service.example").read_text(
