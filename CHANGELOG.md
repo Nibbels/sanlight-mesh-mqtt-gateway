@@ -4,6 +4,8 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
+## 0.4.1 - 2026-07-26
+
 - Classify complete read-only Mesh silence as `mesh-no-response` when BlueZ accepts the requests but no selected lamp returns a matching status, while preserving ordinary partial and per-lamp failures.
 - Persist the last successful Mesh response and consecutive complete no-response command count in non-secret gateway state and publish the optional health summary in retained gateway information.
 - Add `sanlight-gateway capture-mesh-failure` for a read-only `get-live` probe with before/after UART counters, kernel and Mesh-daemon journals, and an HCI `btmon` capture without restarting the Mesh daemon.

@@ -39,7 +39,7 @@ from .traffic_safety import BRIGHTNESS_WRITE_MIN_INTERVAL_SECONDS
 from .state import StateError, read_state, validate_state_identity
 
 
-SERVICE_VERSION = "0.4.0"
+SERVICE_VERSION = "0.4.1"
 
 
 class GatewayServiceError(RuntimeError):
