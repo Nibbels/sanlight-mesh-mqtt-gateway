@@ -355,6 +355,8 @@ capture_mesh_failure() {
   done
   if pgrep -f '[s]anlight_canonical_sender_poc.py' >/dev/null 2>&1; then
     echo "ERROR: another SANlight Mesh command is still running." >&2
+    cleanup_capture
+    trap - EXIT INT TERM
     return 1
   fi
 
@@ -427,6 +429,11 @@ capture_mesh_failure() {
   echo "The Mesh daemon was not restarted, so the original transport state was preserved."
   echo "Review the bundle before sharing; hci.btsnoop contains raw Bluetooth traffic."
   echo "After a failed probe, recover with: sudo sanlight-gateway recover-mesh"
+
+  # EXIT traps outlive function-local variables. Complete cleanup while the
+  # capture scope still exists, then remove the traps before returning.
+  cleanup_capture
+  trap - EXIT INT TERM
 }
 
 status_command() {

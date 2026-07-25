@@ -90,6 +90,29 @@ class ProductizationFilesTest(unittest.TestCase):
         self.assertNotIn("set-max", capture)
         self.assertNotIn("set-uptime", capture)
 
+    def test_mesh_capture_clears_exit_trap_before_local_scope_ends(self) -> None:
+        helper = (ROOT / "scripts/sanlight-gateway").read_text(encoding="utf-8")
+        capture_start = helper.index("capture_mesh_failure()")
+        capture_end = helper.index("status_command()", capture_start)
+        capture = helper[capture_start:capture_end]
+
+        self.assertIn("  cleanup_capture\n  trap - EXIT INT TERM", capture)
+        self.assertIn(
+            'echo "After a failed probe, recover with: sudo sanlight-gateway recover-mesh"\n\n'
+            "  # EXIT traps outlive function-local variables. Complete cleanup while the\n"
+            "  # capture scope still exists, then remove the traps before returning.\n"
+            "  cleanup_capture\n"
+            "  trap - EXIT INT TERM\n",
+            capture,
+        )
+
+        early_failure = capture.index(
+            'echo "ERROR: another SANlight Mesh command is still running." >&2'
+        )
+        early_return = capture.index("    return 1", early_failure)
+        self.assertIn("    cleanup_capture", capture[early_failure:early_return])
+        self.assertIn("    trap - EXIT INT TERM", capture[early_failure:early_return])
+
     def test_uart_overrun_parser_is_awk_portable(self) -> None:
         helper = (ROOT / "scripts/sanlight-gateway").read_text(encoding="utf-8")
         function_start = helper.index("uart_overrun_count()")
