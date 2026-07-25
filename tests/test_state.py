@@ -17,11 +17,13 @@ class StateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "private" / "state.json"
             write_state(path, {"role": "test", "token": "0123456789abcdef"})
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+            if os.name == "posix":
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
             self.assertEqual(token_from_state(read_state(path), "test"), 0x0123456789ABCDEF)
             self.assertEqual(list(path.parent.glob("*.tmp")), [])
 
+    @unittest.skipUnless(os.name == "posix", "POSIX mode bits are not available")
     def test_overbroad_state_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.json"

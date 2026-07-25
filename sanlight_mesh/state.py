@@ -12,8 +12,15 @@ class StateError(RuntimeError):
     """Raised for unsafe, corrupt or mismatching local state."""
 
 
+def _has_posix_permission_bits() -> bool:
+    """Return whether chmod-style owner/group/other bits are meaningful."""
+    return os.name == "posix"
+
+
 def _ensure_private_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not _has_posix_permission_bits():
+        return
     try:
         mode = path.stat().st_mode & 0o777
         if mode != 0o700:
@@ -32,7 +39,8 @@ def write_state(path: Path, state: Mapping[str, Any]) -> None:
             prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
         )
         try:
-            os.fchmod(fd, 0o600)
+            if _has_posix_permission_bits():
+                os.fchmod(fd, 0o600)
             payload = (json.dumps(dict(state), indent=2, sort_keys=True) + "\n").encode(
                 "utf-8"
             )
@@ -42,7 +50,8 @@ def write_state(path: Path, state: Mapping[str, Any]) -> None:
                 os.fsync(handle.fileno())
             os.replace(temporary, path)
             temporary = None
-            os.chmod(path, 0o600)
+            if _has_posix_permission_bits():
+                os.chmod(path, 0o600)
             try:
                 directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
             except (AttributeError, OSError):
@@ -73,12 +82,13 @@ def read_state(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        mode = path.stat().st_mode & 0o777
-        if mode & 0o077:
-            raise StateError(
-                f"State file {path} is too broadly accessible (mode {mode:04o}); "
-                "run chmod 600 on it"
-            )
+        if _has_posix_permission_bits():
+            mode = path.stat().st_mode & 0o777
+            if mode & 0o077:
+                raise StateError(
+                    f"State file {path} is too broadly accessible (mode {mode:04o}); "
+                    "run chmod 600 on it"
+                )
         value = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise StateError(f"State file {path} is not valid JSON: {exc}") from exc

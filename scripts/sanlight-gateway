@@ -20,11 +20,14 @@ Commands:
   doctor                       Run read-only health checks
   logs [LINES]                 Show recent gateway journal (default: 100)
   restart                      Restart the MQTT gateway service
+  recover-mesh                 Restart the local Mesh transport in a safe order
   check-config                 Validate configuration without starting the service
   collect-diagnostics [FILE]   Write a redacted text report
+  capture-mesh-failure NODE [DIR]
+                               Capture one read-only probe plus HCI diagnostics
   help                         Show this help
 
-The doctor and diagnostics commands never send Mesh write commands.
+The doctor, diagnostics, recovery and capture commands never send Mesh write commands.
 USAGE
 }
 
@@ -133,6 +136,299 @@ service_summary() {
   echo
 }
 
+wait_mesh_ready() {
+  local timeout_seconds="${1:-25}"
+  local elapsed=0
+  while (( elapsed < timeout_seconds )); do
+    if systemctl is-active --quiet "$MESH_SERVICE" \
+      && busctl introspect org.bluez.mesh /org/bluez/mesh org.bluez.mesh.Network1 \
+        >/dev/null 2>&1; then
+      return 0
+    fi
+    if systemctl is-failed --quiet "$MESH_SERVICE"; then
+      return 1
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  return 1
+}
+
+wait_gateway_active() {
+  local timeout_seconds="${1:-25}"
+  local elapsed=0
+  while (( elapsed < timeout_seconds )); do
+    systemctl is-active --quiet "$SERVICE" && return 0
+    systemctl is-failed --quiet "$SERVICE" && return 1
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  return 1
+}
+
+recover_mesh_command() {
+  echo "Recovering the local BlueZ Mesh transport."
+  echo "No lamp write command will be sent; the gateway startup refresh is read-only."
+
+  systemctl stop "$SERVICE"
+  if ! systemctl restart "$MESH_SERVICE"; then
+    echo "ERROR: could not restart $MESH_SERVICE." >&2
+    systemctl start "$SERVICE" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  if ! wait_mesh_ready 25; then
+    echo "ERROR: BlueZ Mesh Network1 did not become ready within 25 seconds." >&2
+    systemctl --no-pager --full status "$MESH_SERVICE" >&2 || true
+    journalctl -u "$MESH_SERVICE" -n 80 --no-pager >&2 || true
+    systemctl start "$SERVICE" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  systemctl start "$SERVICE"
+  if ! wait_gateway_active 25; then
+    echo "ERROR: $SERVICE did not become active within 25 seconds." >&2
+    systemctl --no-pager --full status "$SERVICE" >&2 || true
+    journalctl -u "$SERVICE" -n 80 --no-pager >&2 || true
+    return 1
+  fi
+
+  echo "Mesh transport and MQTT gateway restarted successfully."
+  doctor_command
+}
+
+uart_overrun_count() {
+  local source="${1:-/proc/tty/driver/ttyAMA}"
+  [[ -r "$source" ]] || { echo 0; return 0; }
+  awk '
+    {
+      for (index = 1; index <= NF; index++) {
+        if ($index ~ /^oe:[0-9]+$/) {
+          split($index, parts, ":")
+          total += parts[2]
+        }
+      }
+    }
+    END { print total + 0 }
+  ' "$source"
+}
+
+mesh_health_doctor_summary() {
+  [[ -n "$REPO_DIR" && -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]] || return 0
+  PYTHONPATH="$REPO_DIR" /usr/bin/python3 - "$CONFIG_PATH" <<'PY' 2>/dev/null || true
+from pathlib import Path
+import sys
+
+from sanlight_mesh.gateway_config import load_gateway_config
+from sanlight_mesh.state import read_state
+
+config = load_gateway_config(Path(sys.argv[1]))
+document = read_state(config.state_dir / "mqtt-gateway-state.json") or {}
+health = document.get("meshHealth", {})
+if not isinstance(health, dict) or not health:
+    print("PASS no complete Mesh no-response condition recorded in persistent state")
+    raise SystemExit(0)
+
+count = health.get("consecutiveCompleteNoResponseCommands", 0)
+if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+    count = 0
+last_success = health.get("lastSuccessfulResponseAt")
+last_failure = health.get("lastCompleteNoResponseAt")
+if count:
+    suffix = f"; last at {last_failure}" if isinstance(last_failure, str) else ""
+    print(f"WARN {count} consecutive complete Mesh no-response command(s) recorded{suffix}")
+elif isinstance(last_success, str):
+    print(f"PASS last verified Mesh response recorded at {last_success}")
+else:
+    print("PASS no consecutive complete Mesh no-response condition recorded")
+PY
+}
+
+build_direct_probe_argv() {
+  local node="$1"
+  DIRECT_PROBE_ARGV=()
+  mapfile -d '' -t DIRECT_PROBE_ARGV < <(
+    PYTHONPATH="$REPO_DIR" /usr/bin/python3 - "$CONFIG_PATH" "$node" <<'PY'
+from pathlib import Path
+import sys
+
+from sanlight_mesh.gateway_config import load_gateway_config
+
+config = load_gateway_config(Path(sys.argv[1]))
+node = sys.argv[2]
+arguments = [
+    sys.executable,
+    str(config.project_root / "sanlight_canonical_sender_poc.py"),
+    "--cdb",
+    str(config.cdb_path),
+    "--control-app-id",
+    str(config.control_app_id),
+    "--sender-app-id",
+    str(config.sender_app_id),
+    "--provisioner-state",
+    str(config.state_dir / "control-provisioner.json"),
+    "--sender-state",
+    str(config.state_dir / "canonical-sender.json"),
+    "get-live",
+    node,
+]
+for argument in arguments:
+    sys.stdout.buffer.write(argument.encode("utf-8") + b"\0")
+PY
+  )
+  (( ${#DIRECT_PROBE_ARGV[@]} > 0 ))
+}
+
+capture_mesh_failure() {
+  local node="${1^^}"
+  local requested_output="${2:-}"
+  [[ "$node" =~ ^[0-9A-F]{4}$ ]] || {
+    echo "ERROR: NODE must be a four-digit hexadecimal lamp address." >&2
+    return 2
+  }
+  [[ -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]] || {
+    echo "ERROR: gateway configuration was not found; use --config PATH" >&2
+    return 1
+  }
+  [[ -n "$REPO_DIR" && -f "$REPO_DIR/sanlight_canonical_sender_poc.py" ]] || {
+    echo "ERROR: gateway repository/release directory was not found" >&2
+    return 1
+  }
+  command -v btmon >/dev/null 2>&1 || {
+    echo "ERROR: btmon is unavailable; install the BlueZ diagnostic tools first." >&2
+    return 1
+  }
+  command -v timeout >/dev/null 2>&1 || {
+    echo "ERROR: timeout is unavailable." >&2
+    return 1
+  }
+  build_direct_probe_argv "$node" || {
+    echo "ERROR: could not construct the read-only probe command." >&2
+    return 1
+  }
+
+  local output
+  output="${requested_output:-$(pwd)/sanlight-mesh-failure-$(date --utc +%Y%m%dT%H%M%SZ)}"
+  output="$(realpath -m "$output")"
+  if [[ -e "$output" ]]; then
+    echo "ERROR: diagnostic output path already exists: $output" >&2
+    return 1
+  fi
+  mkdir -m 0700 "$output"
+
+  local gateway_was_active=0
+  local gateway_needs_restore=0
+  local btmon_pid=""
+  local cleanup_done=0
+  local capture_started=""
+
+  systemctl is-active --quiet "$SERVICE" && gateway_was_active=1
+  gateway_needs_restore="$gateway_was_active"
+
+  cleanup_capture() {
+    (( cleanup_done == 0 )) || return 0
+    cleanup_done=1
+    if [[ -n "$btmon_pid" ]] && kill -0 "$btmon_pid" 2>/dev/null; then
+      kill -INT "$btmon_pid" 2>/dev/null || true
+      wait "$btmon_pid" 2>/dev/null || true
+    fi
+    if (( gateway_needs_restore == 1 )); then
+      systemctl start "$SERVICE" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
+      chown -R "$SUDO_UID:$SUDO_GID" "$output" 2>/dev/null || true
+    fi
+  }
+  trap cleanup_capture EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  echo "Capturing baseline diagnostics in $output"
+  collect_diagnostics "$output/before.txt" >/dev/null
+
+  if (( gateway_was_active == 1 )); then
+    systemctl stop "$SERVICE"
+  fi
+  for _ in $(seq 1 10); do
+    pgrep -f '[s]anlight_canonical_sender_poc.py' >/dev/null 2>&1 || break
+    sleep 1
+  done
+  if pgrep -f '[s]anlight_canonical_sender_poc.py' >/dev/null 2>&1; then
+    echo "ERROR: another SANlight Mesh command is still running." >&2
+    return 1
+  fi
+
+  capture_started="$(date --iso-8601=seconds)"
+  [[ -r /proc/tty/driver/ttyAMA ]] \
+    && cat /proc/tty/driver/ttyAMA > "$output/uart-before.txt" \
+    || true
+  [[ -r /proc/tty/driver/ttyS ]] \
+    && cat /proc/tty/driver/ttyS > "$output/ttyS-before.txt" \
+    || true
+
+  btmon -w "$output/hci.btsnoop" > "$output/btmon.txt" 2>&1 &
+  btmon_pid=$!
+  sleep 2
+  if ! kill -0 "$btmon_pid" 2>/dev/null; then
+    echo "WARNING: btmon exited before the probe; inspect btmon.txt." >&2
+    btmon_pid=""
+  fi
+
+  echo "Running one read-only get-live probe for node $node."
+  set +e
+  timeout --signal=TERM 45s "${DIRECT_PROBE_ARGV[@]}" 2>&1 \
+    | redact_stream \
+    | tee "$output/probe.txt"
+  local probe_exit="${PIPESTATUS[0]}"
+  set -e
+  printf '%s\n' "$probe_exit" > "$output/probe-exit-code.txt"
+
+  if [[ -n "$btmon_pid" ]] && kill -0 "$btmon_pid" 2>/dev/null; then
+    kill -INT "$btmon_pid" 2>/dev/null || true
+    wait "$btmon_pid" 2>/dev/null || true
+    btmon_pid=""
+  fi
+
+  [[ -r /proc/tty/driver/ttyAMA ]] \
+    && cat /proc/tty/driver/ttyAMA > "$output/uart-after.txt" \
+    || true
+  [[ -r /proc/tty/driver/ttyS ]] \
+    && cat /proc/tty/driver/ttyS > "$output/ttyS-after.txt" \
+    || true
+
+  {
+    echo "Capture started: $capture_started"
+    echo "Probe node: $node"
+    echo "Probe exit code: $probe_exit"
+    echo "UART overrun count before: $(uart_overrun_count "$output/uart-before.txt")"
+    echo "UART overrun count after: $(uart_overrun_count "$output/uart-after.txt")"
+  } > "$output/summary.txt"
+
+  journalctl -k --since "$capture_started" --no-pager --output=short-iso 2>&1 \
+    | redact_stream > "$output/kernel-since-probe.txt"
+  journalctl -u "$MESH_SERVICE" --since "$capture_started" \
+    --no-pager --output=short-iso 2>&1 \
+    | redact_stream > "$output/meshd-since-probe.txt"
+
+  if (( gateway_was_active == 1 )); then
+    systemctl start "$SERVICE"
+    gateway_needs_restore=0
+    wait_gateway_active 25 || true
+  fi
+  collect_diagnostics "$output/after.txt" >/dev/null
+
+  if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
+    chown -R "$SUDO_UID:$SUDO_GID" "$output" 2>/dev/null || true
+  fi
+  chmod -R u=rwX,go= "$output"
+
+  echo "Mesh-failure capture written to: $output"
+  echo "Probe exit code: $probe_exit"
+  echo "The Mesh daemon was not restarted, so the original transport state was preserved."
+  echo "Review the bundle before sharing; hci.btsnoop contains raw Bluetooth traffic."
+  echo "After a failed probe, recover with: sudo sanlight-gateway recover-mesh"
+}
+
 status_command() {
   service_summary "$BROKER_SERVICE" "LOCAL MQTT BROKER"
   service_summary "$MESH_SERVICE" "MESH SERVICE"
@@ -186,6 +482,31 @@ doctor_command() {
   else
     fail "BlueZ Mesh Network1 D-Bus interface unavailable"
   fi
+
+  if [[ -r /proc/tty/driver/ttyAMA ]]; then
+    uart_overruns="$(uart_overrun_count)"
+    if [[ "$uart_overruns" =~ ^[0-9]+$ ]] && (( uart_overruns > 0 )); then
+      warn "PL011 UART reports ${uart_overruns} cumulative overrun(s); capture before/after counters during the next Mesh failure"
+    else
+      pass "PL011 UART reports no cumulative overruns"
+    fi
+  else
+    warn "PL011 UART statistics unavailable"
+  fi
+
+  recent_hci_error="$(
+    journalctl -k --since '24 hours ago' --no-pager --output=short-iso 2>/dev/null \
+      | grep -Ei 'Bluetooth: hci0: (Frame reassembly failed|Opcode 0x[0-9A-Fa-f]+ failed|.*Command Disallowed)' \
+      | tail -n 1 \
+      || true
+  )"
+  if [[ -n "$recent_hci_error" ]]; then
+    warn "recent kernel Bluetooth/HCI transport error found; run collect-diagnostics for details"
+  else
+    pass "no kernel Bluetooth/HCI transport error found in the last 24 hours"
+  fi
+
+  mesh_health_doctor_summary
 
   if [[ -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]]; then
     mode="$(stat -c '%a' "$CONFIG_PATH" 2>/dev/null || echo unknown)"
@@ -274,6 +595,11 @@ collect_diagnostics() {
     echo
     echo "== HOST =="
     hostnamectl 2>&1 || true
+    if [[ -r /proc/device-tree/model ]]; then
+      printf 'Device model: '
+      tr -d '\0' < /proc/device-tree/model
+      echo
+    fi
     uname -a 2>&1 || true
     [[ -r /etc/os-release ]] && cat /etc/os-release
 
@@ -317,8 +643,25 @@ collect_diagnostics() {
       2>&1 | head -n 80 || true
 
     echo
+    echo "== BLUETOOTH TRANSPORT =="
+    echo "hci0 device path:"
+    readlink -f /sys/class/bluetooth/hci0/device 2>&1 || true
+    echo "rfkill state:"
+    rfkill list bluetooth 2>&1 || true
+    echo "PL011 UART statistics (cumulative since boot):"
+    [[ -r /proc/tty/driver/ttyAMA ]]       && cat /proc/tty/driver/ttyAMA       || echo "unavailable"
+    echo "mini-UART statistics (cumulative since boot):"
+    [[ -r /proc/tty/driver/ttyS ]]       && cat /proc/tty/driver/ttyS       || echo "unavailable"
+    echo "Recent kernel Bluetooth/HCI messages:"
+    journalctl -k -n 500 --no-pager --output=short-iso 2>&1       | grep -Ei 'Bluetooth|hci0|Frame reassembly|Opcode|Command Disallowed'       | tail -n 120       || true
+
+    echo
     echo "== READ-ONLY DOCTOR =="
     doctor_command 2>&1 || true
+
+    echo
+    echo "== RECENT MESH DAEMON JOURNAL =="
+    journalctl -u "$MESH_SERVICE" -n 250 --no-pager --output=short-iso 2>&1 || true
 
     echo
     echo "== RECENT BROKER JOURNAL =="
@@ -358,11 +701,36 @@ case "$COMMAND" in
     systemctl restart "$SERVICE"
     systemctl is-active "$SERVICE"
     ;;
+  recover-mesh)
+    if [[ "$EUID" -ne 0 ]]; then
+      args=()
+      [[ -n "$CONFIG_PATH" ]] && args+=(--config "$CONFIG_PATH")
+      exec sudo -- "$0" "${args[@]}" recover-mesh
+    fi
+    recover_mesh_command
+    ;;
   check-config)
     check_config
     ;;
   collect-diagnostics)
     collect_diagnostics "${1-}"
+    ;;
+  capture-mesh-failure)
+    [[ $# -ge 1 && $# -le 2 ]] || {
+      echo "ERROR: capture-mesh-failure requires NODE and optional DIR." >&2
+      usage >&2
+      exit 2
+    }
+    node="$1"
+    output="${2:-}"
+    if [[ "$EUID" -ne 0 ]]; then
+      args=()
+      [[ -n "$CONFIG_PATH" ]] && args+=(--config "$CONFIG_PATH")
+      args+=(capture-mesh-failure "$node")
+      [[ -n "$output" ]] && args+=("$output")
+      exec sudo -- "$0" "${args[@]}"
+    fi
+    capture_mesh_failure "$node" "$output"
     ;;
   help)
     usage

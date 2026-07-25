@@ -107,6 +107,54 @@ class GatewayExecutorTest(unittest.TestCase):
             )
         )
 
+    def test_refresh_classifies_complete_mesh_no_response(self):
+        class StubExecutor(CliCommandExecutor):
+            def _run(self, arguments, timeout=None):
+                if arguments[0] == "get-max":
+                    return ProcessResult(
+                        4,
+                        "GET-MAX UNCONFIRMED. BlueZ accepted the read-only query, but "
+                        "no valid matching 0x09 status was received after 2 attempts.",
+                        "",
+                    )
+                return ProcessResult(
+                    0,
+                    "GET-LIVE COMPLETE. No SANlight 0x0D status was observed after "
+                    "2 attempts.",
+                    "",
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executor = StubExecutor(self.config(root), ["0002", "0003"])
+            result = executor.refresh("all")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "mesh-no-response")
+        self.assertEqual(result.details["failureClass"], "mesh-no-response")
+        self.assertTrue(result.details["transmissionAccepted"])
+        self.assertIn("may be stale", result.message)
+
+    def test_read_daylight_classifies_complete_mesh_no_response(self):
+        class StubExecutor(CliCommandExecutor):
+            def _run(self, arguments, timeout=None):
+                return ProcessResult(
+                    3,
+                    "GET-DAYLIGHT COMPLETE. No SANlight 0x0F or 0x04 daylight status "
+                    "was observed after the combined and configuration-only queries.",
+                    "",
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executor = StubExecutor(self.config(root), ["0002", "0003"])
+            result = executor.read_daylight("all")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "mesh-no-response")
+        self.assertEqual(result.details["failureClass"], "mesh-no-response")
+        self.assertIn("daylight requests", result.message)
+
     def test_read_daylight_retains_raw_only_responses(self):
         class StubExecutor(CliCommandExecutor):
             def _run(self, arguments, timeout=None):

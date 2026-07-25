@@ -47,6 +47,40 @@ _FINAL_VALUE_RE = re.compile(r"0x([0-9A-F]{4})=(\d+)%")
 CLOCK_VERIFICATION_TOLERANCE_SECONDS = 5
 SECONDS_PER_DAY = 86_400
 
+_MESH_NO_RESPONSE_MARKERS = (
+    "GET-LIVE COMPLETE. No SANlight 0x0D status was observed",
+    "GET-MAX UNCONFIRMED. BlueZ accepted the read-only query",
+    "GET-DAYLIGHT COMPLETE. No SANlight 0x0F or 0x04 daylight status was observed",
+)
+
+
+def _is_mesh_no_response_message(message: str) -> bool:
+    return any(marker in message for marker in _MESH_NO_RESPONSE_MARKERS)
+
+
+def _all_errors_are_mesh_no_response(errors: Mapping[str, object]) -> bool:
+    messages: list[str] = []
+    for value in errors.values():
+        if isinstance(value, Mapping):
+            messages.extend(
+                nested for nested in value.values() if isinstance(nested, str)
+            )
+        elif isinstance(value, str):
+            messages.append(value)
+    return bool(messages) and all(_is_mesh_no_response_message(item) for item in messages)
+
+
+def _mesh_no_response_details(errors: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "errors": dict(errors),
+        "failureClass": "mesh-no-response",
+        "transmissionAccepted": True,
+        "recoveryHint": (
+            "Capture diagnostics before recovery, then run "
+            "'sudo sanlight-gateway recover-mesh'."
+        ),
+    }
+
 
 def _local_seconds_since_midnight() -> int:
     now = datetime.now().astimezone()
@@ -242,21 +276,39 @@ class CliCommandExecutor:
 
         ok = not errors
         any_reported = bool(reported or live_reported)
+        complete_no_response = (
+            not any_reported
+            and bool(errors)
+            and _all_errors_are_mesh_no_response(errors)
+        )
+        if ok:
+            status_text = "verified"
+            message = (
+                "MaxBrightness, live lamp output, and lamp clocks refreshed and verified."
+                if target == "all"
+                else "MaxBrightness, live lamp output, and lamp clock refreshed and verified."
+            )
+            details: Mapping[str, object] = {}
+        elif complete_no_response:
+            status_text = "mesh-no-response"
+            message = (
+                "BlueZ accepted the read-only Mesh requests, but no selected lamp "
+                "returned a status response. The local Bluetooth Mesh transport may "
+                "be stale. Capture diagnostics before recovery."
+            )
+            details = _mesh_no_response_details(errors)
+        else:
+            status_text = "partial" if any_reported else "failed"
+            message = "One or more read-only lamp status requests failed."
+            details = {"errors": errors} if errors else {}
+
         return ExecutionResult(
             ok=ok,
-            status="verified" if ok else "partial" if any_reported else "failed",
-            message=(
-                (
-                    "MaxBrightness, live lamp output, and lamp clocks refreshed and verified."
-                    if target == "all"
-                    else "MaxBrightness, live lamp output, and lamp clock refreshed and verified."
-                )
-                if ok
-                else "One or more read-only lamp status requests failed."
-            ),
+            status=status_text,
+            message=message,
             reported=reported,
             live_reported=live_reported,
-            details={"errors": errors} if errors else {},
+            details=details,
         )
 
     def read_daylight(self, target: str) -> ExecutionResult:
@@ -290,15 +342,26 @@ class CliCommandExecutor:
                 else "Stored daylight configuration read and verified."
             )
             status_text = "verified"
+            details: Mapping[str, object] = {}
         elif daylight_reported:
             message = (
                 f"Daylight configuration verified for {verified_count} of {total} "
                 "selected lamps; raw responses were retained where available."
             )
             status_text = "partial"
+            details: Mapping[str, object] = {"errors": errors} if errors else {}
+        elif errors and _all_errors_are_mesh_no_response(errors):
+            message = (
+                "BlueZ accepted the read-only daylight requests, but no selected lamp "
+                "returned a status response. The local Bluetooth Mesh transport may "
+                "be stale. Capture diagnostics before recovery."
+            )
+            status_text = "mesh-no-response"
+            details = _mesh_no_response_details(errors)
         else:
             message = "No daylight configuration response could be read."
             status_text = "failed"
+            details = {"errors": errors} if errors else {}
 
         return ExecutionResult(
             ok=ok,
@@ -307,7 +370,7 @@ class CliCommandExecutor:
             reported={},
             live_reported={},
             daylight_reported=daylight_reported,
-            details={"errors": errors} if errors else {},
+            details=details,
         )
 
     def _clock_write(self, command: GatewayCommand) -> ExecutionResult:

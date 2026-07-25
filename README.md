@@ -106,6 +106,18 @@ Review diagnostic output before sharing it. The command is designed to omit
 credentials and Mesh secrets, but local hostnames and topology details may still
 be visible.
 
+When every lamp read times out although the services remain active, capture the
+transport state before recovery and then restart the local Mesh path safely:
+
+```bash
+sudo sanlight-gateway capture-mesh-failure NODE_ADDRESS
+sudo sanlight-gateway recover-mesh
+```
+
+The capture uses only a read-only lamp probe. Its `hci.btsnoop` file contains raw
+Bluetooth traffic and must be reviewed before sharing. See
+[INSTRUCTIONS.md](INSTRUCTIONS.md#bluetooth-mesh-no-response-diagnosis-and-recovery).
+
 ## Multiple gateways
 
 Use one gateway Pi and one adapter instance per independent SANlight Mesh. Each

@@ -251,6 +251,9 @@ class SanlightMqttGateway:
             "localClock": local_clock,
             "timestamp": isoformat_utc(observed),
         }
+        mesh_health = self.store.get_mesh_health()
+        if mesh_health:
+            payload["meshHealth"] = mesh_health
         payload.update(self.sequence_state)
         remaining = self.sequence_state.get("sequenceRemaining")
         if isinstance(remaining, int):
@@ -521,6 +524,22 @@ class SanlightMqttGateway:
                 execution = self.executor.execute(command)
                 if command.is_write:
                     self.last_write_monotonic = time.monotonic()
+
+                if command.action != "refresh-gateway-info":
+                    self.store.record_mesh_outcome(
+                        command_id=command.command_id,
+                        action=command.action,
+                        target=command.target,
+                        response_observed=bool(
+                            execution.reported
+                            or execution.live_reported
+                            or execution.daylight_reported
+                        ),
+                        complete_no_response=(
+                            execution.details.get("failureClass")
+                            == "mesh-no-response"
+                        ),
+                    )
 
                 addresses_to_publish: set[str] = set()
                 for address, value in execution.reported.items():

@@ -70,6 +70,26 @@ class ProductizationFilesTest(unittest.TestCase):
         self.assertIn('exec sudo -- "$0" "${args[@]}" restart', helper)
         self.assertNotIn('${CONFIG_PATH:+--config "$CONFIG_PATH"}', helper)
 
+    def test_management_helper_includes_manual_mesh_capture_and_recovery(self) -> None:
+        helper = (ROOT / "scripts/sanlight-gateway").read_text(encoding="utf-8")
+        self.assertIn("capture-mesh-failure NODE [DIR]", helper)
+        self.assertIn("recover-mesh", helper)
+        self.assertIn('btmon -w "$output/hci.btsnoop"', helper)
+        self.assertIn('systemctl stop "$SERVICE"', helper)
+        self.assertIn('systemctl restart "$MESH_SERVICE"', helper)
+        self.assertIn('wait_mesh_ready 25', helper)
+        self.assertIn('systemctl start "$SERVICE"', helper)
+        self.assertIn("The Mesh daemon was not restarted", helper)
+        self.assertIn("/proc/tty/driver/ttyAMA", helper)
+        self.assertIn("Frame reassembly failed", helper)
+
+        capture_start = helper.index("capture_mesh_failure()")
+        capture_end = helper.index("status_command()", capture_start)
+        capture = helper[capture_start:capture_end]
+        self.assertNotIn('restart "$MESH_SERVICE"', capture)
+        self.assertNotIn("set-max", capture)
+        self.assertNotIn("set-uptime", capture)
+
     def test_management_and_service_include_local_broker(self) -> None:
         helper = (ROOT / "scripts/sanlight-gateway").read_text(encoding="utf-8")
         unit = (ROOT / "systemd/sanlight-mqtt-gateway.service.example").read_text(
@@ -89,6 +109,8 @@ class ProductizationFilesTest(unittest.TestCase):
         self.assertIn("iobroker-mqtt-password", release)
         self.assertIn("sanlight-mesh-mqtt-gateway", release)
         self.assertIn("sanlight-gateway-diagnostics", release)
+        self.assertIn("sanlight-mesh-failure", release)
+        self.assertIn("btsnoop", release)
 
     def test_private_material_not_bundled(self) -> None:
         forbidden_names = {

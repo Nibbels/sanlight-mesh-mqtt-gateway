@@ -208,6 +208,55 @@ These tests used the earlier external-broker validation topology. The MQTT API
 and safety engine are unchanged, while the current product topology now places
 Mosquitto on the gateway Pi.
 
+## Mesh no-response diagnostics and recovery validation for v0.4.1
+
+The no-response hardening is deliberately observable and manually recoverable;
+it does not restart BlueZ automatically. Validate it in two stages.
+
+### Healthy-path capture
+
+With both lamps reachable, run:
+
+```bash
+sudo sanlight-gateway capture-mesh-failure NODE_ADDRESS
+```
+
+Expected:
+
+- the MQTT gateway is stopped only for the isolated read-only probe and returns
+  to its previous state;
+- `probe.txt` ends with a verified `GET-LIVE COMPLETE` result;
+- `probe-exit-code.txt` contains `0`;
+- `summary.txt` records before/after UART overrun counters;
+- `hci.btsnoop`, kernel and Mesh-daemon evidence files exist;
+- `sanlight-meshd-generic.service` is not restarted by the capture command; and
+- no brightness, clock, blackout or daylight write is sent.
+
+Review the bundle locally and delete it after validation because the HCI capture
+contains raw Bluetooth traffic.
+
+### Recovery command
+
+Run the manual recovery only after recording the current service state:
+
+```bash
+sudo sanlight-gateway recover-mesh
+```
+
+Expected:
+
+- the MQTT gateway stops before the Mesh daemon restarts;
+- `org.bluez.mesh.Network1` becomes ready before the MQTT gateway starts;
+- doctor completes without a failed check;
+- the startup refresh remains read-only; and
+- a subsequent adapter refresh or daylight read is verified.
+
+A real stale-session recurrence should be captured before recovery. Compare the
+PL011 `oe` count before and after the failed probe and inspect the btsnoop trace
+for absent advertising commands, HCI command rejection or an apparently normal
+transmission with no response. Do not infer the root cause from a historical
+non-zero cumulative overrun count alone.
+
 ## Minimum regression sequence
 
 Use the smallest test set justified by the changed files. Documentation-only

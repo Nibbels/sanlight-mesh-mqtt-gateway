@@ -17,20 +17,103 @@
     "timestamp"
   ],
   "properties": {
-    "protocolVersion": {"const": 1},
-    "serviceVersion": {"type": "string"},
-    "gatewayId": {"type": "string"},
-    "meshUuid": {"type": "string"},
-    "senderAddress": {"type": "string", "pattern": "^[0-9A-F]{4}$"},
-    "nodes": {"type": "array"},
-    "writePolicy": {"type": "object"},
-    "localClockSeconds": {"type": "integer", "minimum": 0, "maximum": 86399},
-    "localClock": {"type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"},
-    "sequenceNumber": {"type": "integer", "minimum": 0, "maximum": 16777215},
-    "sequenceRemaining": {"type": "integer", "minimum": 0, "maximum": 16777215},
-    "timestamp": {"type": "string", "format": "date-time"},
-    "sequenceStatus": {"enum": ["ok", "warning", "critical"]},
-    "sequenceRemainingPercent": {"type": "number", "minimum": 0, "maximum": 100},
-    "sequenceWarning": {"type": "string"}
+    "protocolVersion": {
+      "const": 1
+    },
+    "serviceVersion": {
+      "type": "string"
+    },
+    "gatewayId": {
+      "type": "string"
+    },
+    "meshUuid": {
+      "type": "string"
+    },
+    "senderAddress": {
+      "type": "string",
+      "pattern": "^[0-9A-F]{4}$"
+    },
+    "nodes": {
+      "type": "array"
+    },
+    "writePolicy": {
+      "type": "object"
+    },
+    "localClockSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 86399
+    },
+    "localClock": {
+      "type": "string",
+      "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"
+    },
+    "sequenceNumber": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16777215
+    },
+    "sequenceRemaining": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16777215
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sequenceStatus": {
+      "enum": [
+        "ok",
+        "warning",
+        "critical"
+      ]
+    },
+    "sequenceRemainingPercent": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "sequenceWarning": {
+      "type": "string"
+    },
+    "meshHealth": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "lastSuccessfulResponseAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "consecutiveCompleteNoResponseCommands": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastCompleteNoResponseAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastCompleteNoResponseCommand": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "action",
+            "target"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
   }
 }

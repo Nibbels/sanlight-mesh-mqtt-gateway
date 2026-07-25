@@ -28,6 +28,39 @@ Validate the installed configuration without starting another gateway process:
 sudo sanlight-gateway check-config
 ```
 
+## Bluetooth Mesh no-response diagnosis and recovery
+
+A running Mesh daemon and an available D-Bus interface do not prove that lamp
+traffic is still flowing. When BlueZ accepts read-only requests but every
+selected lamp times out, the gateway now reports `mesh-no-response` and records
+the consecutive complete no-response count.
+
+Before restarting the Mesh service, capture one failed read-only probe:
+
+```bash
+sudo sanlight-gateway capture-mesh-failure NODE_ADDRESS
+```
+
+The command temporarily stops only the MQTT gateway worker, records an HCI
+`btmon` trace, performs one `get-live` read, saves UART counters and relevant
+journals, then restores the previous gateway-service state. It deliberately
+does **not** restart `sanlight-meshd-generic.service`, because that would erase
+the transport condition being investigated. The generated directory is private
+to the invoking user. Review it before sharing: `hci.btsnoop` contains raw
+Bluetooth traffic and local topology information.
+
+After capturing the failure, run the validated recovery sequence:
+
+```bash
+sudo sanlight-gateway recover-mesh
+```
+
+This stops the MQTT gateway, restarts the BlueZ Mesh daemon, waits for
+`org.bluez.mesh.Network1`, starts the MQTT gateway again and runs the read-only
+doctor. It does not send a lamp write; the normal startup refresh is read-only.
+Automatic recovery is intentionally not enabled because powered-off or
+temporarily unreachable lamps can produce the same external timeout symptom.
+
 ## Read-only lamp refresh
 
 The native ioBroker adapter normally performs refreshes. For direct diagnosis, first list the installation-specific node addresses:
@@ -68,6 +101,7 @@ The management helper performs Git inspection with optional locks disabled, so a
 
 - Installer cannot determine the IV Index: [Missing a trusted IV Index](docs/ADVANCED_REFERENCE.md#missing-a-trusted-iv-index)
 - Mesh service or D-Bus unavailable: [Troubleshooting](docs/ADVANCED_REFERENCE.md#troubleshooting)
+- Services healthy but every lamp read times out: [Complete Mesh no-response while services remain healthy](docs/ADVANCED_REFERENCE.md#complete-mesh-no-response-while-services-remain-healthy)
 - Canonical sender transmits but lamps do not reply: [Replay protection after a fresh SD card](docs/ADVANCED_REFERENCE.md#replay-protection-after-a-fresh-sd-card)
 - Explicit sequence advancement after completed diagnosis: [Explicit local sequence recovery](docs/ADVANCED_REFERENCE.md#explicit-local-sequence-recovery)
 - Full destructive rebuild boundary: [Destructive reset to a fresh sequence space](docs/ADVANCED_REFERENCE.md#destructive-reset-to-a-fresh-sequence-space)

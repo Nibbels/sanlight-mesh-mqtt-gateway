@@ -14,6 +14,7 @@ sanlight-mesh-mqtt-gateway.passwd
 # Generated releases and diagnostics
 dist/
 sanlight-gateway-diagnostics-*.txt
+sanlight-mesh-failure-*/
 
 # Python
 __pycache__/
@@ -25,6 +26,7 @@ __pycache__/
 *.log
 *.pcap
 *.pcapng
+*.btsnoop
 .vscode/
 .idea/
 .DS_Store

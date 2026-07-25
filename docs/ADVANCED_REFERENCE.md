@@ -671,6 +671,75 @@ rfkill list bluetooth
 
 The installer disables the competing `bluetooth.service` and `bluetooth-mesh.service` because the validated `generic:hci0` path requires exclusive controller access.
 
+### Complete Mesh no-response while services remain healthy
+
+The local services can remain active and `org.bluez.mesh.Network1` can remain
+available while the effective HCI/Mesh transmit or receive path no longer
+produces lamp responses. The observed failure pattern on a Raspberry Pi 3 was:
+
+- ioBroker commands reached the gateway and were queued;
+- BlueZ accepted the read-only Mesh transmissions;
+- `refresh`, per-lamp daylight reads and an all-lamp daylight read all timed out;
+- a direct `get-live` probe also received no SANlight status;
+- both lamps remained reachable from the SANlight smartphone app;
+- restarting `sanlight-meshd-generic.service` restored the same direct read and
+  subsequent MQTT commands.
+
+The gateway classifies this complete silence as `mesh-no-response`. This is a
+failure class, not a proven root cause. Both lamps being unpowered or a severe RF
+outage can produce the same external symptom.
+
+Capture evidence **before** restarting the Mesh daemon:
+
+```bash
+sudo sanlight-gateway capture-mesh-failure NODE_ADDRESS
+```
+
+The command:
+
+1. writes a redacted baseline diagnostic report;
+2. stops the MQTT gateway worker to avoid a command-lock collision;
+3. records cumulative PL011 and mini-UART counters;
+4. starts `btmon` and saves a binary HCI btsnoop capture;
+5. performs one read-only `get-live` probe using the configured identities;
+6. records the UART counters and kernel/Mesh-daemon journals again;
+7. restores the prior MQTT gateway service state without restarting the Mesh
+   daemon.
+
+The output directory contains `summary.txt`, `probe.txt`, before/after UART
+statistics, relevant journals, `btmon.txt`, and `hci.btsnoop`. Review the bundle
+before publication. The text reports are redacted, but the btsnoop file contains
+raw local Bluetooth traffic and may reveal controller addresses and traffic
+patterns.
+
+Interpret the next failed capture conservatively:
+
+- an increasing PL011 `oe` counter together with new `Frame reassembly failed`
+  messages supports a UART/HCI transport-overrun hypothesis;
+- D-Bus acceptance with no corresponding HCI advertising commands in the
+  btsnoop trace supports a `bluetooth-meshd` state-machine stall;
+- HCI commands rejected with `Command Disallowed`, opcode failures or timeouts
+  support a controller/advertising-state failure;
+- apparently normal HCI transmission with no reply keeps RF loss, receive-path
+  failure and remote rejection in scope.
+
+The PL011 `oe` value is cumulative since boot. A non-zero value alone does not
+prove that an overrun caused the current outage; the before/after delta during a
+failed probe is the useful evidence. Likewise, a frame-reassembly warning can
+occur during a later successful transaction and must be correlated by time.
+
+After the capture, recover the local transport with:
+
+```bash
+sudo sanlight-gateway recover-mesh
+```
+
+The management command performs the validated order: stop the MQTT gateway,
+restart `sanlight-meshd-generic.service`, wait for `Network1`, start the MQTT
+gateway and run the doctor. No lamp write is sent. Automatic restart is
+intentionally omitted until the failure trigger is better understood, because
+legitimate lamp power loss must not cause a recovery loop.
+
 ### State identity mismatch
 
 A state file belongs to a different CDB identity, App-ID or unicast address. Do not edit its token. On a disposable fresh installation, re-run the full setup with an explicit reset:

@@ -234,6 +234,7 @@ Important statuses include:
 - `queue-full`
 - `unconfirmed`
 - `partial`
+- `mesh-no-response`
 - `failed`
 - `gateway-error`
 - `indeterminate-after-restart`
@@ -241,6 +242,19 @@ Important statuses include:
 `superseded` means a newer pending setpoint for the same node replaced the older request before any Bluetooth message was sent.
 
 `indeterminate-after-restart` means the gateway persisted an in-flight marker, then stopped before it could store a final result. The same command ID is deliberately not executed again. Refresh the node state and decide whether a new write with a new ID is needed.
+
+`mesh-no-response` is a more specific read-only failure: BlueZ accepted every
+request needed for the selected operation, but no selected lamp returned a
+matching status. It does not prove that BlueZ is defective—powered-off lamps or
+an RF outage can look identical—but it distinguishes complete Mesh silence from
+a parser error or a partial per-lamp result. Details include
+`failureClass="mesh-no-response"`, the individual errors and a manual recovery
+hint. The gateway does not restart the Mesh daemon automatically.
+
+Retained `gateway/info` can optionally include `meshHealth` with the last
+successful response timestamp, the number of consecutive complete no-response
+commands and the last affected command. Any later valid lamp response resets
+the consecutive counter to zero.
 
 When a completed QoS 1 command ID is delivered again, the gateway republishes the stored final result without a second Mesh transaction. The result details include `duplicateDelivery: true`.
 

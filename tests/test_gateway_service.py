@@ -132,6 +132,23 @@ class MixedDaylightExecutor(FakeExecutor):
         )
 
 
+class NoResponseExecutor(FakeExecutor):
+    def execute(self, command):
+        self.commands.append(command)
+        return ExecutionResult(
+            ok=False,
+            status="mesh-no-response",
+            message="no response",
+            reported={},
+            live_reported={},
+            daylight_reported={},
+            details={
+                "failureClass": "mesh-no-response",
+                "errors": {"0002": "timeout", "0003": "timeout"},
+            },
+        )
+
+
 class GatewayServiceTest(unittest.TestCase):
     def make_gateway(self, tmp):
         state = Path(tmp) / "state"
@@ -275,6 +292,47 @@ class GatewayServiceTest(unittest.TestCase):
                     if topic.endswith("/result/cmd-1")
                 ]
                 self.assertTrue(duplicate_results[-1]["details"]["duplicateDelivery"])
+            finally:
+                gateway.stop()
+
+    def test_complete_no_response_is_persisted_and_published_in_gateway_info(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gateway, transport = self.make_gateway(tmp)
+            gateway.executor = NoResponseExecutor()
+            try:
+                now = datetime.now(timezone.utc)
+                payload = json.dumps(
+                    {
+                        "id": "mesh-timeout-1",
+                        "action": "read-daylight",
+                        "target": "all",
+                        "createdAt": isoformat_utc(now),
+                        "ttlSeconds": 30,
+                    }
+                ).encode()
+                gateway.on_message(
+                    IncomingMessage(gateway.config.command_topic, payload, 1, False)
+                )
+
+                result = self.wait_for_result(transport, "mesh-timeout-1")
+                self.assertEqual(result["status"], "mesh-no-response")
+                health = gateway.store.get_mesh_health()
+                self.assertEqual(health["consecutiveCompleteNoResponseCommands"], 1)
+                self.assertEqual(
+                    health["lastCompleteNoResponseCommand"]["id"],
+                    "mesh-timeout-1",
+                )
+                info_messages = [
+                    message
+                    for topic, message, retained in transport.json_messages
+                    if topic.endswith("/gateway/info") and retained
+                ]
+                self.assertEqual(
+                    info_messages[-1]["meshHealth"][
+                        "consecutiveCompleteNoResponseCommands"
+                    ],
+                    1,
+                )
             finally:
                 gateway.stop()
 

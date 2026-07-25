@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -40,7 +41,8 @@ class GatewayStoreTest(unittest.TestCase):
             reloaded = GatewayStore(path, dedup_ttl_seconds=3600, dedup_max_entries=10)
             self.assertEqual(reloaded.get_result("a"), {"ok": True})
             self.assertEqual(reloaded.get_node("0003").max_brightness, 48)
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            if os.name == "posix":
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_inflight_marker_is_persistent_and_cleared_by_final_result(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -66,6 +68,53 @@ class GatewayStoreTest(unittest.TestCase):
             self.assertIsNone(store.get_result("old"))
             self.assertIsNotNone(store.get_result("new1"))
             self.assertIsNotNone(store.get_result("new2"))
+
+    def test_mesh_health_tracks_complete_no_response_and_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            first = datetime(2026, 7, 25, 16, 0, tzinfo=timezone.utc)
+            second = first + timedelta(minutes=1)
+            recovered = second + timedelta(minutes=1)
+            store = GatewayStore(path, dedup_ttl_seconds=3600, dedup_max_entries=10)
+
+            store.record_mesh_outcome(
+                command_id="read-1",
+                action="read-daylight",
+                target="all",
+                response_observed=False,
+                complete_no_response=True,
+                now=first,
+            )
+            store.record_mesh_outcome(
+                command_id="read-2",
+                action="refresh",
+                target="all",
+                response_observed=False,
+                complete_no_response=True,
+                now=second,
+            )
+
+            reloaded = GatewayStore(path, dedup_ttl_seconds=3600, dedup_max_entries=10)
+            health = reloaded.get_mesh_health()
+            self.assertEqual(health["consecutiveCompleteNoResponseCommands"], 2)
+            self.assertEqual(health["lastCompleteNoResponseCommand"]["id"], "read-2")
+
+            reloaded.record_mesh_outcome(
+                command_id="read-3",
+                action="refresh",
+                target="0002",
+                response_observed=True,
+                complete_no_response=False,
+                now=recovered,
+            )
+            health = GatewayStore(
+                path,
+                dedup_ttl_seconds=3600,
+                dedup_max_entries=10,
+            ).get_mesh_health()
+            self.assertEqual(health["consecutiveCompleteNoResponseCommands"], 0)
+            self.assertEqual(health["lastSuccessfulResponseAt"], recovered.isoformat().replace("+00:00", "Z"))
+            self.assertNotIn("lastCompleteNoResponseAt", health)
 
     def test_daylight_verified_state_survives_raw_only_followup(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -33,7 +33,7 @@ git archive \
   ':(exclude)private' \
   ':(exclude)dist'
 
-forbidden='(^|/)(private/|\.state/|SANlightMesh\.json$|.*\.(log|pcap|pcapng)$|mqtt-password\.txt$|iobroker-mqtt-password\.txt$|sanlight-mesh-mqtt-gateway\.passwd$|sanlight-gateway-diagnostics-.*\.txt$|__pycache__/)'
+forbidden='(^|/)(private/|\.state/|SANlightMesh\.json$|sanlight-mesh-failure-[^/]+/|.*\.(log|pcap|pcapng|btsnoop)$|mqtt-password\.txt$|iobroker-mqtt-password\.txt$|sanlight-mesh-mqtt-gateway\.passwd$|sanlight-gateway-diagnostics-.*\.txt$|__pycache__/)'
 if tar -tzf "$archive" | grep -E "$forbidden"; then
   echo "ERROR: release archive contains forbidden private/runtime files" >&2
   rm -f "$archive"

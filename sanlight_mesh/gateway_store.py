@@ -44,6 +44,7 @@ class GatewayStore:
             "processed": {},
             "inflight": {},
             "nodes": {},
+            "meshHealth": {},
         }
         loaded = read_state(path)
         if loaded is not None:
@@ -56,12 +57,20 @@ class GatewayStore:
         processed = value.get("processed", {})
         inflight = value.get("inflight", {})
         nodes = value.get("nodes", {})
-        if isinstance(processed, dict) and isinstance(inflight, dict) and isinstance(nodes, dict):
+        mesh_health = value.get("meshHealth", {})
+        if (
+            isinstance(processed, dict)
+            and isinstance(inflight, dict)
+            and isinstance(nodes, dict)
+        ):
             self.document = {
                 "version": STORE_VERSION,
                 "processed": dict(processed),
                 "inflight": dict(inflight),
                 "nodes": dict(nodes),
+                "meshHealth": (
+                    dict(mesh_health) if isinstance(mesh_health, dict) else {}
+                ),
             }
 
     @property
@@ -75,6 +84,55 @@ class GatewayStore:
     @property
     def nodes(self) -> dict[str, Any]:
         return self.document["nodes"]
+
+    @property
+    def mesh_health(self) -> dict[str, Any]:
+        return self.document["meshHealth"]
+
+    def get_mesh_health(self) -> dict[str, Any]:
+        return dict(self.mesh_health)
+
+    def record_mesh_outcome(
+        self,
+        *,
+        command_id: str,
+        action: str,
+        target: str,
+        response_observed: bool,
+        complete_no_response: bool,
+        now: datetime | None = None,
+    ) -> None:
+        if not response_observed and not complete_no_response:
+            return
+
+        current = now or utc_now()
+        health = dict(self.mesh_health)
+        if response_observed:
+            health.update(
+                {
+                    "lastSuccessfulResponseAt": isoformat_utc(current),
+                    "consecutiveCompleteNoResponseCommands": 0,
+                }
+            )
+            health.pop("lastCompleteNoResponseAt", None)
+            health.pop("lastCompleteNoResponseCommand", None)
+        elif complete_no_response:
+            previous = health.get("consecutiveCompleteNoResponseCommands", 0)
+            if isinstance(previous, bool) or not isinstance(previous, int) or previous < 0:
+                previous = 0
+            health.update(
+                {
+                    "consecutiveCompleteNoResponseCommands": previous + 1,
+                    "lastCompleteNoResponseAt": isoformat_utc(current),
+                    "lastCompleteNoResponseCommand": {
+                        "id": command_id,
+                        "action": action,
+                        "target": target,
+                    },
+                }
+            )
+        self.document["meshHealth"] = health
+        self.save()
 
     def save(self) -> None:
         write_state(self.path, self.document)
