@@ -1,0 +1,22 @@
+[Unit]
+Description=Conservative watchdog for SANlight BlueZ Mesh TX stalls
+Documentation=https://github.com/Nibbels/sanlight-mesh-mqtt-gateway/blob/main/docs/AUTO_RECOVERY.md
+After=sanlight-mqtt-gateway.service sanlight-meshd-generic.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=@REPO_DIR@
+ExecStart=/usr/bin/python3 -m sanlight_mesh.mesh_watchdog --config @CONFIG_PATH@
+TimeoutStartSec=240
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadOnlyPaths=@REPO_DIR@ @CONFIG_PATH@
+ReadWritePaths=@STATE_DIR@
