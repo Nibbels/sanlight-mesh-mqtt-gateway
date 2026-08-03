@@ -14,7 +14,9 @@ UMask=0077
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 NoNewPrivileges=true
-RestrictAddressFamilies=AF_UNIX
+# The isolated read-only sender uses D-Bus over AF_UNIX and Linux AF_ALG
+# sockets for Mesh cryptography. No network socket families are permitted.
+RestrictAddressFamilies=AF_UNIX AF_ALG
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
