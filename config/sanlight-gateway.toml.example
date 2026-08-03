@@ -20,6 +20,19 @@ refresh_on_start = true
 # Set to 0 to disable periodic refresh. Polling consumes Mesh Sequence Numbers.
 refresh_interval_seconds = 1800
 
+# Conservative automatic recovery for the captured BlueZ Mesh TX stall.
+# Recovery requires a second read-only probe with zero PL011 UART TX bytes.
+[watchdog]
+enabled = true
+incident_max_age_seconds = 3600
+recent_success_seconds = 86400
+probe_timeout_seconds = 50
+probe_cooldown_seconds = 3600
+recovery_cooldown_seconds = 1800
+recovery_window_seconds = 21600
+max_recoveries_in_window = 2
+verification_timeout_seconds = 60
+
 [mqtt]
 # The normal product topology runs Mosquitto on this same gateway Pi.
 host = "127.0.0.1"

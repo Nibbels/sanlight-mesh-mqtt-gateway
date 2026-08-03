@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the SANlight Mesh TX-stall watchdog
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=60s
+AccuracySec=10s
+RandomizedDelaySec=5s
+Persistent=true
+Unit=sanlight-mesh-watchdog.service
+
+[Install]
+WantedBy=timers.target
