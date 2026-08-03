@@ -75,9 +75,9 @@ if [[ "$SKIP_PACKAGES" -eq 0 ]]; then
     apt-get install -y --no-install-recommends python3-paho-mqtt
 fi
 
-UNIT_SOURCE="$REPO_DIR/systemd/sanlight-mqtt-gateway.service.example"
-UNIT_TARGET="/etc/systemd/system/sanlight-mqtt-gateway.service"
-/usr/bin/python3 - "$UNIT_SOURCE" "$UNIT_TARGET" "$REPO_DIR" "$CONFIG_PATH" "$STATE_DIR" <<'PY'
+render_unit() {
+    local source="$1" target="$2"
+    /usr/bin/python3 - "$source" "$target" "$REPO_DIR" "$CONFIG_PATH" "$STATE_DIR" <<'PY'
 from pathlib import Path
 import sys
 source, target, repo, config, state = map(Path, sys.argv[1:])
@@ -96,15 +96,29 @@ for marker, value in {
 target.write_text(text, encoding="utf-8")
 target.chmod(0o644)
 PY
+}
+
+render_unit \
+    "$REPO_DIR/systemd/sanlight-mqtt-gateway.service.example" \
+    "/etc/systemd/system/sanlight-mqtt-gateway.service"
+render_unit \
+    "$REPO_DIR/systemd/sanlight-mesh-watchdog.service.example" \
+    "/etc/systemd/system/sanlight-mesh-watchdog.service"
+install -m 0644 \
+    "$REPO_DIR/systemd/sanlight-mesh-watchdog.timer" \
+    "/etc/systemd/system/sanlight-mesh-watchdog.timer"
 
 systemctl daemon-reload
 systemctl enable sanlight-mqtt-gateway.service
+systemctl enable sanlight-mesh-watchdog.timer
 if [[ "$NO_START" -eq 0 ]]; then
     systemctl restart sanlight-mqtt-gateway.service
+    systemctl restart sanlight-mesh-watchdog.timer
     sleep 2
     systemctl --no-pager --full status sanlight-mqtt-gateway.service || true
+    systemctl --no-pager --full status sanlight-mesh-watchdog.timer || true
 else
-    echo "Gateway service installed but not started (--no-start)."
+    echo "Gateway service and Mesh watchdog timer installed but not started (--no-start)."
 fi
 
-echo "MQTT gateway service installation complete."
+echo "MQTT gateway service and conservative Mesh watchdog installation complete."
