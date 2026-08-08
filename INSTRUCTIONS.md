@@ -58,8 +58,13 @@ sudo sanlight-gateway recover-mesh
 This stops the MQTT gateway, restarts the BlueZ Mesh daemon, waits for
 `org.bluez.mesh.Network1`, starts the MQTT gateway again and runs the read-only
 doctor. It does not send a lamp write; the normal startup refresh is read-only.
-Automatic recovery is intentionally not enabled because powered-off or
-temporarily unreachable lamps can produce the same external timeout symptom.
+Version 0.4.2 also installs a fail-closed watchdog: after an eligible complete
+all-node read failure it performs a separate read-only probe and restarts the
+local Mesh transport only when BlueZ accepts the probe, no lamp status arrives
+and the PL011 UART TX counter remains unchanged. Powered-off lamps, RF loss with
+actual UART transmission and ambiguous cases do not trigger automatic recovery.
+Manual capture and recovery remain available for diagnosis. See
+[docs/AUTO_RECOVERY.md](docs/AUTO_RECOVERY.md) for the full trigger and loop-protection model.
 
 ## Read-only lamp refresh
 

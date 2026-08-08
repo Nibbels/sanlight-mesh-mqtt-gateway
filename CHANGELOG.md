@@ -4,6 +4,15 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
+## 0.4.2 - 2026-08-08
+
+- Add conservative automatic recovery for the recurring BlueZ Mesh TX-stall signature, gated behind a recent complete all-node read failure and a separate read-only confirmation probe.
+- Confirm a stall only when BlueZ accepts the isolated probe, no lamp status arrives and the PL011 UART TX counter remains unchanged; ordinary RF loss, powered-off lamps and ambiguous probe results fail closed without restarting Mesh.
+- Add a systemd watchdog timer with one-probe-per-hour throttling, a 30-minute recovery cooldown and a maximum of two automatic recoveries in a six-hour rolling window; original application write commands are never replayed.
+- Verify every automatic recovery by requiring a new read-only lamp response after the local Mesh transport restart, while persisting non-secret probe, UART and recovery state for diagnostics.
+- Allow the hardened watchdog service to use the AF_ALG crypto socket family required by the BlueZ Mesh probe path.
+- Field-validate the automatic recovery on 2026-08-07: a natural TX stall was confirmed with UART TX `4262388 -> 4262388`, the local Mesh transport recovered automatically and a new lamp response verified recovery about six seconds later without operator intervention.
+
 ## 0.4.1 - 2026-07-26
 
 - Classify complete read-only Mesh silence as `mesh-no-response` when BlueZ accepts the requests but no selected lamp returns a matching status, while preserving ordinary partial and per-lamp failures.

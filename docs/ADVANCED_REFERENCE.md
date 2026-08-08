@@ -736,9 +736,14 @@ sudo sanlight-gateway recover-mesh
 
 The management command performs the validated order: stop the MQTT gateway,
 restart `sanlight-meshd-generic.service`, wait for `Network1`, start the MQTT
-gateway and run the doctor. No lamp write is sent. Automatic restart is
-intentionally omitted until the failure trigger is better understood, because
-legitimate lamp power loss must not cause a recovery loop.
+gateway and run the doctor. No lamp write is sent. Version 0.4.2 additionally
+installs a fail-closed watchdog that can invoke this recovery path only after an
+eligible complete all-node read failure is independently confirmed by a
+read-only probe that BlueZ accepts while the PL011 UART TX counter remains
+unchanged. If UART TX increases, counters are unavailable, a lamp responds or
+the evidence is otherwise ambiguous, the watchdog does not restart Mesh. See
+[AUTO_RECOVERY.md](AUTO_RECOVERY.md) for the full trigger, cooldown and
+loop-protection model.
 
 ### State identity mismatch
 

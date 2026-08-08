@@ -155,9 +155,9 @@ lamp-clock control and stored daylight-profile reads. See
 [docs/MQTT_TEST_PLAN.md](docs/MQTT_TEST_PLAN.md)
 for the detailed record.
 
-Version `0.4.0` is the current immutable release. The project remains pre-1.0,
-so coordinated compatibility changes are documented explicitly in both
-repositories.
+Version `0.4.2` adds conservative automatic recovery for the confirmed BlueZ
+Mesh TX-stall signature. The project remains pre-1.0, so coordinated
+compatibility changes are documented explicitly in both repositories.
 
 The read-only current-output percentage was additionally compared with the
 SANlight app on 2026-07-17: the gateway value `33.4%` appeared as the app's
